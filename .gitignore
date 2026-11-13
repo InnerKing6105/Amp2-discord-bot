@@ -1,0 +1,14 @@
+# Zygarde — local/private files
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+logs/
+data/dashboard.json
+data/player_avatars.json
+*.log
+*.db
+*.sqlite3
+*.zip
