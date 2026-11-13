@@ -14,3 +14,10 @@ Please avoid posting bot tokens, credentials, private logs, or server addresses 
 - Avoid copying `logs/`, `data/dashboard.json`, `data/player_avatars.json`, or game/server configuration files into the repository.
 - Check any commits you stage with `git diff --cached` before you push; enable GitHub push protection where available.
 - Public Minecraft chat messages and player names may be sent to Discord and avatar providers. Tell players what the bridge does.
+
+## Automatic operations (v2.1)
+
+- `RESTART_ENABLED=false` is the secure default. Enable only after verified backups and check `RESTART_REQUIRE_RECENT_BACKUP=true`.
+- Zygarde does not create or restore backups. AMP's built-in scheduler owns backup consistency and retention. The bot reads inventory only.
+- Metrics are parsed only from spark console output and are never substituted from unrelated RAM/CPU fields.
+- Files under `data/`, including restart and dashboard state, are ignored by Git and should remain private.

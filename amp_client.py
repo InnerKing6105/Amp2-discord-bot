@@ -106,6 +106,10 @@ class AMPClient:
     def players(self):
         return players_from_api(self.call("Core/GetUserList"))
 
+    def backups(self):
+        """Read inventory created by AMP local backup plugin, without modifying files."""
+        return self.call("LocalFileBackupPlugin/GetBackups")
+
     def send_minecraft(self, text):
         return self.call("Core/SendConsoleMessage", message=text)
 

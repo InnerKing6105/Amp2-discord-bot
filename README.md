@@ -1,3 +1,15 @@
+# Zygarde 2.1 — Mineverse operations upgrade
+
+**New in this version:** AMP-backed backup inventory monitoring and missing-backup alerts, spark TPS/MSPT monitoring in the live Discord dashboard, and **opt-in** daily restarts with 15/5/1-minute warnings, backup safety gate, and restart deduplication.
+
+- `/backups` (staff only), `/performance`, and `/schedule` are new; the earlier slash commands, avatar chat bridge and working ADS proxy remain unchanged.
+- The backup schedule itself must be created once in **AMP 2's Scheduler**. The bot only checks and alerts on actual AMP backup results, and never copies a live world or deletes backups.
+- Restarting is **disabled by default**. Enable only after a real test backup. See [Operations and safety setup](docs/OPERATIONS.md).
+- Real TPS/MSPT require the server-side **spark** mod. No mod: metrics show `Not available`.
+- Run `python -m unittest discover -s tests -v` for offline validation.
+
+---
+
 # Zygarde — AMP 2 Minecraft ↔ Discord Bot
 
 A Python Discord companion for a **single Minecraft Java server managed by CubeCoders AMP 2**. Built and tested for **Windows 11**, using the local AMP ADS proxy — no public AMP port, RCON, or Minecraft bot account required.
