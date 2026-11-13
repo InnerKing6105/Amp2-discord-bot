@@ -1,14 +1,34 @@
-# Zygarde — local/private files
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+
+# Local environments / Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
-logs/
-data/dashboard.json
-data/player_avatars.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local state and logs
+logs/*
+!logs/.gitkeep
+data/*
+!data/.gitkeep
+!data/player_avatars.example.json
 *.log
 *.db
 *.sqlite3
+*.bak
+
+# IDE / operating system / distribution artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 *.zip
