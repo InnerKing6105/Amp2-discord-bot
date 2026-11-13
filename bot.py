@@ -20,6 +20,8 @@ from amp_client import AMPClient, AMPError
 from chat_parser import parse_entry
 from formatting import (format_uptime, metric_display, metric_percent,
                         player_count, pretty_state, safe_text, state_code)
+from server_ops import (SparkSampler, backup_list, backup_age_hours, last_backup,
+                        local_now, parse_restart_clock, restart_actions)
 
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / '.env')
@@ -75,6 +77,23 @@ AMP_URL = setting('AMP_URL', required=True)
 AMP_USER = setting('AMP_USERNAME', required=True)
 AMP_PASS = setting('AMP_PASSWORD', required=True)
 AMP_INSTANCE_ID = setting('AMP_INSTANCE_ID')
+PERF_ENABLED = enabled('PERFORMANCE_MONITOR_ENABLED')
+PERF_INTERVAL = max(60, number('PERFORMANCE_POLL_SECONDS', 180))
+PERF_WARN_TPS = float(setting('PERFORMANCE_WARN_TPS', '17'))
+PERF_WARN_MSPT = float(setting('PERFORMANCE_WARN_MSPT', '50'))
+BACKUP_MONITOR = enabled('BACKUP_MONITOR_ENABLED')
+BACKUP_MAX_AGE = max(1, number('BACKUP_MAX_AGE_HOURS', 26))
+RESTART_ENABLED = enabled('RESTART_ENABLED', 'false')
+RESTART_TZ = setting('RESTART_TIMEZONE', 'America/Toronto')
+RESTART_TIME = parse_restart_clock(setting('RESTART_AT', '05:00'))
+RESTART_BACKUP_REQUIRED = enabled('RESTART_REQUIRE_RECENT_BACKUP')
+RESTART_WARN = (15, 5, 1)
+if RESTART_ENABLED:
+    try:
+        local_now(RESTART_TZ)
+    except Exception as e:
+        raise SystemExit('Invalid RESTART_TIMEZONE (install tzdata for IANA zones on Windows)') from e
+
 
 if not GUILD_ID or not CHAT_ID:
     raise SystemExit('DISCORD_GUILD_ID and CHAT_CHANNEL_ID must be set.')
@@ -93,6 +112,8 @@ RED = discord.Color(0xDC5969)
 MUTED = discord.Color(0x33483F)
 NO_PINGS = discord.AllowedMentions.none()
 DASH_FILE = BASE / 'data' / 'dashboard.json'
+RESTART_FILE = BASE / 'data' / 'restart_state.json'
+
 try:
     AVATAR_OVERRIDES = load_avatar_overrides(BASE / 'data' / 'player_avatars.json')
 except ValueError as exc:
@@ -114,6 +135,18 @@ status_poll_at = 0.0
 dashboard_message = None
 dashboard_lock = asyncio.Lock()
 last_manual_dashboard_refresh = 0.0
+spark = SparkSampler()
+spark_lock = asyncio.Lock()
+last_spark_command = 0.0
+low_tps_streak = 0
+last_evaluated_mspt = None
+last_performance_alert = 0.0
+backup_info = None
+backup_error = None
+backup_last_alert = 0.0
+backup_last_seen = None
+restart_lock = asyncio.Lock()
+
 
 
 def redacted(error):
@@ -169,6 +202,20 @@ def status_embed(status, players=None):
     embed.add_field(name='▣ CPU', value=f'**{metric_display(status, "cpu")}**', inline=True)
     embed.add_field(name='▤ MEMORY', value=f'**{metric_display(status, "memory", "ram")}**', inline=True)
     embed.add_field(name='◈ CONNECTION', value='**AMP 2 / Local API**' if status else '**API unreachable**', inline=True)
+    if PERF_ENABLED:
+        tps_display, mspt_display = spark.display(datetime.now(timezone.utc))
+        embed.add_field(name='⚡ TPS (spark)', value=f'**{tps_display}**', inline=True)
+        embed.add_field(name='⌛ MSPT (spark)', value=f'**{mspt_display}**', inline=True)
+    if BACKUP_MONITOR:
+        if backup_info:
+            age = backup_age_hours(backup_info)
+            backup_desc = f'{age:.1f}h ago · AMP verified' if age is not None else 'Unknown'
+        else:
+            backup_desc = 'Not verified yet' if not backup_error else 'AMP inventory unavailable'
+        embed.add_field(name='▣ LATEST BACKUP', value=f'**{backup_desc}**', inline=True)
+    if RESTART_ENABLED:
+        embed.add_field(name='◷ DAILY RESTART', value=f'**{RESTART_TIME[0]:02d}:{RESTART_TIME[1]:02d} {RESTART_TZ}**', inline=True)
+
     if players:
         embed.add_field(name='◉ IN THE WORLD', value=safe_text('  ·  '.join(players[:25]), 1000), inline=False)
     else:
@@ -312,6 +359,26 @@ async def check_resources(status):
                         f'AMP reports {metric} at {val:.0f}%. Sustained high usage may affect Mineverse.', 'warn')
 
 
+async def handle_performance_entry(entry):
+    global low_tps_streak, last_performance_alert, last_evaluated_mspt
+    if not PERF_ENABLED:
+        return
+    now = datetime.now(timezone.utc)
+    if not spark.consume(entry, now) or spark.last_mspt_at == last_evaluated_mspt:
+        return
+    if spark.tps is None or spark.mspt_median is None:
+        return
+    last_evaluated_mspt = spark.last_mspt_at
+    bad = spark.tps < PERF_WARN_TPS or spark.mspt_median > PERF_WARN_MSPT
+    low_tps_streak = low_tps_streak + 1 if bad else 0
+    if low_tps_streak >= 3 and time.monotonic() - last_performance_alert > 1200:
+        last_performance_alert = time.monotonic()
+        audit(f'Performance warning TPS={spark.tps:.2f}, medianMSPT={spark.mspt_median:.1f}')
+        await alert('⚠ MINEVERSE PERFORMANCE',
+                    f'spark reports {spark.tps:.2f} TPS (1m), {spark.mspt_median:.1f} ms median tick time (10s).'
+                    ' Check active mods/chunks if lag persists.', 'warn')
+
+
 async def poll_once():
     """Core/GetUpdates must use the same logged-in AMP session each time."""
     global current_status, failed_polls, api_down, status_poll_at
@@ -322,6 +389,7 @@ async def poll_once():
         entries = updates.get('ConsoleEntries') or []
         if isinstance(entries, list):
             for entry in entries[:300]:
+                await handle_performance_entry(entry)
                 event = parse_entry(entry)
                 if event:
                     await relay_event(event)
@@ -532,6 +600,156 @@ async def show_players(interaction):
         await interaction.followup.send('Could not load player list from AMP.', ephemeral=True)
 
 
+async def request_spark_sample():
+    global last_spark_command
+    if not PERF_ENABLED or state_code(current_status) != 20:
+        return False
+    async with spark_lock:
+        now = time.monotonic()
+        if now - last_spark_command < 30:
+            return False
+        last_spark_command = now
+        spark.start(datetime.now(timezone.utc))
+        await asyncio.to_thread(amp.send_minecraft, 'spark tps')
+        return True
+
+
+async def verify_backup_inventory(notify=True):
+    global backup_info, backup_error, backup_last_seen, backup_last_alert
+    try:
+        raw = await asyncio.to_thread(amp.backups)
+        backups = backup_list(raw)
+        backup_info = last_backup(backups)
+        backup_error = None
+        # A newly observed backup is real only when reported in the AMP inventory.
+        if backup_info is not None:
+            timestamp = backup_info[0]
+            if backup_last_seen is not None and timestamp > backup_last_seen and notify:
+                audit('AMP reported a new completed backup')
+                await alert('▣ BACKUP VERIFIED',
+                            f'AMP now lists a newer backup from {timestamp.strftime("%Y-%m-%d %H:%M UTC")}.', 'ok')
+            backup_last_seen = timestamp
+        if notify and (backup_info is None or backup_age_hours(backup_info) > BACKUP_MAX_AGE):
+            if time.monotonic() - backup_last_alert > 3600:
+                backup_last_alert = time.monotonic()
+                await alert('⚠ BACKUP NEEDS ATTENTION',
+                            f'No backup newer than {BACKUP_MAX_AGE} hours was confirmed in AMP. '
+                            'Check the Minecraft instance Scheduler and Backups tab.', 'warn')
+        return backups
+    except (AMPError, OSError, TypeError, ValueError) as exc:
+        backup_error = type(exc).__name__
+        LOG.warning('AMP backup inventory unavailable: %s', redacted(exc))
+        return None
+
+
+def read_restart_state():
+    try:
+        state = json.loads(RESTART_FILE.read_text(encoding='utf-8'))
+        if isinstance(state, dict):
+            return state
+    except (OSError, TypeError, ValueError):
+        pass
+    return {}
+
+
+def save_restart_state(state):
+    tmp = RESTART_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(state, indent=2), encoding='utf-8')
+    tmp.replace(RESTART_FILE)
+
+
+async def automatic_restart_tick():
+    global planned_stop_until
+    if not RESTART_ENABLED:
+        return
+    async with restart_lock:
+        now = local_now(RESTART_TZ)
+        today = now.date().isoformat()
+        state = read_restart_state()
+        if state.get('date') != today:
+            state = {'date': today, 'warned': [], 'completed': None}
+        warned = set(state.get('warned') or [])
+        due = restart_actions(now, RESTART_TIME, warned, state.get('completed'), RESTART_WARN)
+        for kind, minute in due:
+            if kind == 'warn':
+                # Persist first so a bot restart does not replay notifications.
+                warned.add(minute)
+                state['warned'] = sorted(warned)
+                save_restart_state(state)
+                if state_code(current_status) == 20:
+                    try:
+                        await asyncio.to_thread(amp.send_minecraft,
+                                                f'say [Zygarde] Scheduled restart in {minute} minute(s).')
+                    except (AMPError, OSError) as exc:
+                        LOG.warning('Restart warning to Minecraft failed: %s', redacted(exc))
+                    if minute == 15:
+                        await alert('◷ UPCOMING MINEVERSE RESTART',
+                                    'Scheduled restart in 15 minutes. Players have been warned in-game.', 'warn')
+            elif kind == 'restart':
+                # Once per local date even if AMP fails or bot restarts mid-request.
+                state['completed'] = today
+                save_restart_state(state)
+                try:
+                    status = await asyncio.to_thread(amp.status)
+                    if state_code(status) != 20:
+                        audit('Scheduled restart skipped because server is not online')
+                        continue
+                    if RESTART_BACKUP_REQUIRED:
+                        await verify_backup_inventory(notify=False)
+                        if backup_error or backup_age_hours(backup_info) is None or backup_age_hours(backup_info) > BACKUP_MAX_AGE:
+                            audit('Scheduled restart skipped: no recent verified AMP backup')
+                            await alert('⚠ RESTART SKIPPED',
+                                        'A recent verified backup is required; check AMP backup scheduler.', 'warn')
+                            continue
+                    planned_stop_until = time.monotonic() + 300
+                    result = await asyncio.to_thread(amp.restart)
+                    if isinstance(result, dict) and (result.get('Status') is False or result.get('success') is False):
+                        raise AMPError('AMP rejected scheduled restart')
+                    audit('Scheduled restart requested by Zygarde')
+                    await alert('↻ SCHEDULED RESTART', 'The scheduled Mineverse restart was requested through AMP.', 'info')
+                except (AMPError, OSError, TypeError) as exc:
+                    LOG.warning('Scheduled restart request failed: %s', redacted(exc))
+                    await alert('⚠ SCHEDULED RESTART FAILED', 'AMP could not restart Minecraft. Check bot logs.', 'error')
+
+
+@tasks.loop(seconds=30)
+async def perform_spark_check():
+    if PERF_ENABLED and time.monotonic() - last_spark_command >= PERF_INTERVAL:
+        try:
+            await request_spark_sample()
+        except (AMPError, OSError) as exc:
+            LOG.warning('spark tps request failed: %s', redacted(exc))
+
+
+@perform_spark_check.before_loop
+async def before_performance():
+    await bot.wait_until_ready()
+    await asyncio.sleep(15)
+
+
+@tasks.loop(minutes=30)
+async def watch_backups():
+    if BACKUP_MONITOR:
+        await verify_backup_inventory()
+
+
+@watch_backups.before_loop
+async def before_backup_watch():
+    await bot.wait_until_ready()
+    await asyncio.sleep(12)
+
+
+@tasks.loop(seconds=15)
+async def restart_scheduler():
+    await automatic_restart_tick()
+
+
+@restart_scheduler.before_loop
+async def before_restart_scheduler():
+    await bot.wait_until_ready()
+    await asyncio.sleep(10)
+
+
 @tasks.loop(seconds=4)
 async def watch_minecraft():
     await poll_once()
@@ -583,6 +801,12 @@ async def on_ready():
     if not update_dashboard.is_running():
         update_dashboard.change_interval(seconds=DASHBOARD_SECONDS)
         update_dashboard.start()
+    if PERF_ENABLED and not perform_spark_check.is_running():
+        perform_spark_check.start()
+    if BACKUP_MONITOR and not watch_backups.is_running():
+        watch_backups.start()
+    if RESTART_ENABLED and not restart_scheduler.is_running():
+        restart_scheduler.start()
 
 
 @bot.event
@@ -650,6 +874,56 @@ async def dashboard_cmd(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     msg = await sync_dashboard(force=True)
     await interaction.followup.send(f'Dashboard ready: {msg.jump_url}' if msg else 'Dashboard update failed. Check the log.', ephemeral=True)
+
+
+@bot.tree.command(name='performance', description='Show spark TPS and MSPT for Mineverse')
+async def performance_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not PERF_ENABLED:
+        return await interaction.followup.send('spark monitoring is disabled. Set PERFORMANCE_MONITOR_ENABLED=true.', ephemeral=True)
+    try:
+        await request_spark_sample()
+        await asyncio.sleep(8)
+        tps, mspt = spark.display(datetime.now(timezone.utc))
+        body = f'**TPS:** {tps}\n**MSPT:** {mspt}'
+        if tps == 'Not available':
+            body += '\nNo readable spark response yet. Confirm the spark mod is installed server-side and `spark tps` works in AMP console.'
+        await interaction.followup.send(embed=make_embed('⚡ MINEVERSE | PERFORMANCE', body, DEEP), ephemeral=True)
+    except Exception as exc:
+        LOG.warning('Performance request failed: %s', redacted(exc))
+        await interaction.followup.send('Could not query spark. Check local bot logs.', ephemeral=True)
+
+
+@bot.tree.command(name='backups', description='Show AMP backup inventory (staff only)')
+async def backups_cmd(interaction: discord.Interaction):
+    if not can_manage(interaction.user):
+        return await interaction.response.send_message('Staff-only action.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    backups = await verify_backup_inventory(notify=False)
+    if backups is None:
+        return await interaction.followup.send('AMP backup inventory unavailable. Ensure LocalFileBackupPlugin is active.', ephemeral=True)
+    if backup_info:
+        timestamp, item = backup_info
+        detail = f'Last verified: **{timestamp.strftime("%Y-%m-%d %H:%M UTC")}**'
+        detail += f'\nAge: **{backup_age_hours(backup_info):.1f} hours**'
+        detail += f'\nName: **{safe_text(item.get("Name") or item.get("name") or "Unnamed backup", 100)}**'
+    else:
+        detail = 'No backup with a readable date was found in AMP.'
+    detail += f'\nTotal backups reported: **{len(backups)}**'
+    detail += '\nBackups are created and scheduled in AMP → Mineverse → Scheduler.'
+    await interaction.followup.send(embed=make_embed('▣ MINEVERSE | BACKUPS', detail, DEEP), ephemeral=True)
+
+
+@bot.tree.command(name='schedule', description='Show configured automatic restart time')
+async def schedule_cmd(interaction: discord.Interaction):
+    if not RESTART_ENABLED:
+        return await interaction.response.send_message('Automatic restarts are disabled. Set RESTART_ENABLED=true after configuring a backup.', ephemeral=True)
+    state = read_restart_state()
+    body = (f'**Every day:** {RESTART_TIME[0]:02d}:{RESTART_TIME[1]:02d} ({RESTART_TZ})\n'
+            f'**Warnings:** 15, 5, 1 minutes before\n'
+            f'**Recent AMP backup required:** {"Yes" if RESTART_BACKUP_REQUIRED else "No"}\n'
+            f'**Last attempted date:** {safe_text(state.get("completed") or "Not yet", 30)}')
+    await interaction.response.send_message(embed=make_embed('◷ MINEVERSE | RESTART SCHEDULE', body, DEEP), ephemeral=True)
 
 
 @bot.tree.command(name='logs', description='Recent Zygarde alerts and staff actions (staff only)')
