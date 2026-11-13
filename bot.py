@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from bridge_identity import avatar_url as skin_avatar_url, minecraft_chat_command, load_avatar_overrides
 
 from amp_client import AMPClient, AMPError
+from advancement_names import AdvancementResolver
 from chat_parser import parse_entry
 from formatting import (format_uptime, metric_display, metric_percent,
                         player_count, pretty_state, safe_text, state_code)
@@ -75,6 +76,9 @@ AMP_URL = setting('AMP_URL', required=True)
 AMP_USER = setting('AMP_USERNAME', required=True)
 AMP_PASS = setting('AMP_PASSWORD', required=True)
 AMP_INSTANCE_ID = setting('AMP_INSTANCE_ID')
+# Semicolon-separated Windows paths (mods folder, resource packs, KubeJS assets, or individual JARs).
+ADVANCEMENT_LANGUAGE_PATHS = [p.strip().strip('\"') for p in setting('ADVANCEMENT_LANGUAGE_PATHS').split(';') if p.strip()]
+
 
 if not GUILD_ID or not CHAT_ID:
     raise SystemExit('DISCORD_GUILD_ID and CHAT_CHANNEL_ID must be set.')
@@ -82,6 +86,7 @@ if AMP_URL.startswith('http://') and not AMP_URL.startswith(('http://127.0.0.1:'
     LOG.warning('AMP_URL uses HTTP outside loopback. Use HTTPS for nonlocal AMP connections.')
 
 amp = AMPClient(AMP_URL, AMP_USER, AMP_PASS, AMP_INSTANCE_ID)
+ADVANCEMENTS = AdvancementResolver(ADVANCEMENT_LANGUAGE_PATHS, BASE / 'data' / 'advancement_names.json')
 intents = discord.Intents.default()
 intents.message_content = True  # Required only for Discord -> MC text
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents,
@@ -266,7 +271,7 @@ async def relay_event(event):
                 'join': f'**{player_name}** joined the server',
                 'leave': f'**{player_name}** left the server',
                 'death': safe_text(message, 250),
-                'advancement': f'**{player_name}** completed **{safe_text(message, 120)}**',
+                'advancement': f'**{player_name}** completed **{discord.utils.escape_markdown(safe_text(ADVANCEMENTS.resolve(message), 120))}**',
             }[kind]
             event_embed = make_embed(heading, desc, color)
             avatar = avatar_url(player)
