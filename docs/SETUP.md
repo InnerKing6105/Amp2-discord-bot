@@ -162,3 +162,14 @@ Run `python check_advancements.py` for a read-only report. If there are multiple
 ### Diagnose an unresolved Cobbleverse advancement
 
 Run `python diagnose_cobbleverse.py` on the AMP host. If there are no matching keys or advancement definitions, check client resourcepacks or create the local private `data/advancement_names.json` override. The script does not modify the server.
+
+
+## Separate join / leave / death channel
+
+Optional setting: `PLAYER_EVENTS_CHANNEL_ID=YOUR_CHANNEL_ID` in your private `.env`.
+When set, Minecraft join, leave and death embeds use this Discord text channel.
+Regular Minecraft chat and advancement embeds continue using `CHAT_CHANNEL_ID`.
+General alerts continue using `ALERT_CHANNEL_ID`.
+Leave the new setting blank to preserve the original behavior.
+The channel must be within the configured Discord guild and permit viewing,
+sending messages, and embedding links. Restart Zygarde to apply changes.
