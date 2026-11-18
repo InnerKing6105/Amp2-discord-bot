@@ -125,3 +125,23 @@ If your installed asset files do not provide a matching name, you can define one
 This archive fixes the `NameError: ADVANCEMENT_AUTO_DISCOVER is not defined` crash in the earlier Automatic Advancements ZIP. It also includes the read-only `diagnose_cobbleverse.py` tool. Existing `.env` data must be copied locally; no credentials are bundled.
 
 If updating in place rather than extracting this ZIP, add the four advancement discovery configuration assignments after `ADVANCEMENT_LANGUAGE_PATHS` in `bot.py`. Run `python -m unittest discover -s tests` to verify the initialization-order regression test.
+
+
+### Route Minecraft player events to a separate Discord channel
+
+Create a channel such as `#minecraft-events` and copy its channel ID using Discord Developer Mode.
+Add this to your private `.env`:
+
+```env
+CHAT_CHANNEL_ID=YOUR_EXISTING_MINECRAFT_CHAT_CHANNEL_ID
+PLAYER_EVENTS_CHANNEL_ID=YOUR_MINECRAFT_EVENTS_CHANNEL_ID
+PLAYER_EVENTS_IN_CHAT=true
+```
+
+- **Join, leave, death:** sent to `PLAYER_EVENTS_CHANNEL_ID`.
+- **Regular chat and advancements:** remain in `CHAT_CHANNEL_ID`.
+- **Server alerts and outages:** still use `ALERT_CHANNEL_ID`.
+- Blank or missing `PLAYER_EVENTS_CHANNEL_ID` retains the old single-chat-channel behavior.
+- `PLAYER_EVENTS_IN_CHAT=false` disables join/leave/death/advancement notifications, not chat.
+- Give Zygarde View Channel, Send Messages and Embed Links in the events channel.
+- Restart the bot after updating `.env`. No new ports or webhooks are needed for event embeds.

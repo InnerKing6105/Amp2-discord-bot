@@ -20,6 +20,7 @@ from amp_client import AMPClient, AMPError
 from advancement_names import AdvancementResolver
 from server_discovery import discover_advancement_paths
 from chat_parser import parse_entry
+from event_routing import event_channel_id
 from formatting import (format_uptime, metric_display, metric_percent,
                         player_count, pretty_state, safe_text, state_code)
 from server_ops import (SparkSampler, backup_list, backup_age_hours, last_backup,
@@ -62,6 +63,7 @@ def enabled(name, default='true'):
 TOKEN = setting('DISCORD_TOKEN', required=True)
 GUILD_ID = number('DISCORD_GUILD_ID')
 CHAT_ID = number('CHAT_CHANNEL_ID')
+PLAYER_EVENTS_ID = number('PLAYER_EVENTS_CHANNEL_ID') or CHAT_ID
 ALERT_ID = number('ALERT_CHANNEL_ID') or CHAT_ID
 DASHBOARD_ID = number('DASHBOARD_CHANNEL_ID') or ALERT_ID
 MANAGER_ROLE_ID = number('MANAGER_ROLE_ID')
@@ -302,7 +304,12 @@ async def relay_event(event):
                     'Minecraft console reported a possible crash. Check AMP console and crash reports.\n'
                     + safe_text(message, 400), 'error')
         return
-    channel = await get_channel(CHAT_ID)
+    target_channel_id = event_channel_id(
+        kind, CHAT_ID, PLAYER_EVENTS_ID, EVENTS_IN_CHAT
+    )
+    if target_channel_id is None:
+        return
+    channel = await get_channel(target_channel_id)
     if channel is None:
         return
     player_name = safe_text(player, 30)
@@ -329,7 +336,7 @@ async def relay_event(event):
             else:
                 embed.set_author(name=player_name)
             await channel.send(embed=embed, allowed_mentions=NO_PINGS)
-        elif EVENTS_IN_CHAT and kind in ('join', 'leave', 'death', 'advancement'):
+        elif kind in ('join', 'leave', 'death', 'advancement'):
             palette = {'join': (EMERALD, '✦ JOINED THE WORLD'),
                        'leave': (AMBER, '↗ LEFT THE WORLD'),
                        'death': (RED, '☠ PLAYER DEATH'),
