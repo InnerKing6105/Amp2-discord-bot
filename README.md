@@ -12,7 +12,7 @@ A Python Discord companion for a **single Minecraft Java server managed by CubeC
 | **Live dashboard** | One automatically edited status message: players, uptime, CPU, memory, and server state |
 | **Admin buttons** | Start / stop / restart with role checks and confirmation for destructive actions |
 | **Alerts** | State changes, suspected crashes, disconnects, recovery, and sustained resource warnings |
-| **Events** | Player joins/leaves, deaths, and advancements when visible in console output |
+| **Events** | Player joins/leaves, deaths, and advancements with readable names when translation assets are available |
 | **Audit logs** | Staff-only `/logs`, local rotating event logs, no chat contents in audit history |
 | **Customization** | Zygarde emerald embed color, configurable channels, avatars, and polling |
 
@@ -56,6 +56,20 @@ Server control commands require a Discord administrator or the role specified by
 Minecraft → Discord messages use Discord webhooks, when permitted, and show heads provided by [MCHeads](https://mc-heads.net/). If a skin does not resolve by username, create `data/player_avatars.json` from the included `data/player_avatars.example.json` and supply the UUID or texture ID. The real `data/player_avatars.json` file is gitignored.
 
 Third-party avatar services receive the player name or UUID to render the head. Disable `USE_PLAYER_AVATARS` and `USE_WEBHOOK_AVATARS` in your local `.env` if you prefer not to use them.
+
+## Modded advancement names (Cobbleverse and other packs)
+
+Zygarde now resolves console keys like `advancements.cobbleverse.root` into their English display names **when the matching translation is supplied locally**. Without the translation, it displays `Cobbleverse: Root` rather than the untranslated key; that fallback is not the official title.
+
+On the **Windows PC running the bot**, configure `ADVANCEMENT_LANGUAGE_PATHS` in your private `.env` using **semicolon-separated** paths to the Minecraft server's `mods` folder, `kubejs\assets`, or any installed resource pack / data pack archives. Zygarde scans their `assets/<namespace>/lang/en_us.json` files and advancement display JSONs read-only at startup; **restart the bot after changing packs**.
+
+```dotenv
+ADVANCEMENT_LANGUAGE_PATHS=C:\YourServer\\mods;C:\YourServer\\kubejs\\assets
+```
+
+Replace `C:\YourServer` with your own server directory. If the mod does not ship a translation, copy `data/advancement_names.example.json` to `data/advancement_names.json` and map the *exact* console key to the official title. This private file is ignored by Git.
+
+Zygarde cannot identify the genuine advancement title from the key alone; the fallback deliberately avoids claiming that a guessed label is official.
 
 ## Development
 

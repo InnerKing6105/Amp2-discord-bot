@@ -150,3 +150,9 @@ The bot requires in the appropriate channels:
 - AMP `GetUpdates` API: https://docs.rs/ampapi/latest/src/ampapi/modules/core.rs.html
 - discord.py persistent views example: https://github.com/Rapptz/discord.py/blob/master/examples/views/persistent.py
 - Discord webhook reference: https://discordpy.readthedocs.io/en/latest/api.html
+
+## Advancements without manually entering paths
+
+Enable `ADVANCEMENT_AUTO_DISCOVER=true` (the default). Zygarde looks for AMP's Windows datastore, checks for a Minecraft server and detects mods, world datapacks, resourcepacks and common asset directories. `server.properties` determines the active world folder (`level-name`).
+
+Run `python check_advancements.py` for a read-only report. If there are multiple Minecraft instances, set `AMP_INSTANCE_FOLDER=YourInstanceFolderName` or `MINECRAFT_SERVER_ROOT=C:\Path\To\Minecraft`; never use AMP's `/__VDS__/` virtual path. Optional `ADVANCEMENT_LANGUAGE_PATHS` remains available for extra folders. Descriptions appear under achievement names when available.
