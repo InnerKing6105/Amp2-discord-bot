@@ -1,3 +1,15 @@
+# Zygarde 2.1 — Mineverse operations upgrade
+
+**New in this version:** AMP-backed backup inventory monitoring and missing-backup alerts, spark TPS/MSPT monitoring in the live Discord dashboard, and **opt-in** daily restarts with 15/5/1-minute warnings, backup safety gate, and restart deduplication.
+
+- `/backups` (staff only), `/performance`, and `/schedule` are new; the earlier slash commands, avatar chat bridge and working ADS proxy remain unchanged.
+- The backup schedule itself must be created once in **AMP 2's Scheduler**. The bot only checks and alerts on actual AMP backup results, and never copies a live world or deletes backups.
+- Restarting is **disabled by default**. Enable only after a real test backup. See [Operations and safety setup](docs/OPERATIONS.md).
+- Real TPS/MSPT require the server-side **spark** mod. No mod: metrics show `Not available`.
+- Run `python -m unittest discover -s tests -v` for offline validation.
+
+---
+
 # Zygarde — AMP 2 Minecraft ↔ Discord Bot
 
 A Python Discord companion for a **single Minecraft Java server managed by CubeCoders AMP 2**. Built and tested for **Windows 11**, using the local AMP ADS proxy — no public AMP port, RCON, or Minecraft bot account required.
@@ -78,3 +90,38 @@ No open-source license has been selected yet. If you want other people to reuse 
 - [CubeCoders AMP API developer guide](https://github.com/CubeCoders/AMP/wiki/Developers:-How-do-I-start-working-with-AMP's-API%3F)
 - [discord.py documentation](https://discordpy.readthedocs.io/en/stable/)
 - [MCHeads](https://mc-heads.net/)
+
+
+## Automatic advancement discovery (Windows AMP 2)
+
+By default, Zygarde detects a local AMP datastore and reads the Minecraft server's `mods`, `resourcepacks`, world `datapacks` (using `level-name` from `server.properties`), and common Paxi/KubeJS asset locations. It automatically loads English advancement titles **and descriptions** from mod JARs, datapack ZIPs and advancement JSON files. No KubeJS folder is needed.
+
+If several Minecraft servers are installed, Zygarde does not guess which one is yours. Set `MINECRAFT_SERVER_ROOT` to the real **Windows** `Minecraft` directory, or set `AMP_INSTANCE_FOLDER` to the AMP instance folder name. If AMP is installed somewhere other than a drive-root `AMPDatastore`, set `AMP_DATASTORE`. You can still use `ADVANCEMENT_LANGUAGE_PATHS` for extra locations; it is optional. Run the `check_advancements.py` offline diagnostic to see discovery and translation results without starting Discord.
+
+Unknown keys will still be converted to readable, explicitly nonofficial fallback labels. Restart the bot after installing or changing any mod/datapack so it can rescan.
+
+## Cobbleverse advancement names
+
+Zygarde resolves advancement translation keys such as `advancements.cobbleverse.root` by reading local mod/resource-pack language files and advancement JSON files. Automatic discovery is enabled by default; optional explicit paths can supplement it. The scanner is read-only and offline. Without translation resources it displays a readable but **unofficial** fallback (`Cobbleverse: Root`).
+
+You can also copy `data/advancement_names.example.json` to `data/advancement_names.json` to provide exact names manually. The private override is gitignored.
+
+
+## Cobbleverse root name troubleshooting
+
+If `check_advancements.py` reports `advancements.cobbleverse.root` as a **fallback** despite scanning assets, run:
+
+```powershell
+.\.venv\Scripts\python.exe diagnose_cobbleverse.py
+```
+
+This read-only diagnostic searches the selected local mod JARs, datapack ZIPs and language files for exact and closely related `cobbleverse` root keys. It shows which archive contains matching entries. The number of loaded language keys is not a guarantee that a particular Cobbleverse translation is present.
+
+If your installed asset files do not provide a matching name, you can define one in the private (gitignored) `data/advancement_names.json` file. Verify the text in your game before describing it as the official pack title.
+
+
+## Startup hotfix (November 2026)
+
+This archive fixes the `NameError: ADVANCEMENT_AUTO_DISCOVER is not defined` crash in the earlier Automatic Advancements ZIP. It also includes the read-only `diagnose_cobbleverse.py` tool. Existing `.env` data must be copied locally; no credentials are bundled.
+
+If updating in place rather than extracting this ZIP, add the four advancement discovery configuration assignments after `ADVANCEMENT_LANGUAGE_PATHS` in `bot.py`. Run `python -m unittest discover -s tests` to verify the initialization-order regression test.

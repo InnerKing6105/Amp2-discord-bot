@@ -21,6 +21,7 @@ logs/*
 data/*
 !data/.gitkeep
 !data/player_avatars.example.json
+!data/advancement_names.example.json
 *.log
 *.db
 *.sqlite3
